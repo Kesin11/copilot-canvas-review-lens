@@ -2,11 +2,10 @@ import { createServer } from "node:http";
 import { URL } from "node:url";
 import { MAX_REQUEST_BYTES } from "./constants.mjs";
 import { renderHtml } from "./renderer.mjs";
-import { normalizeSectionUpdate, validateDiff } from "./review-input.mjs";
+import { validateDiff } from "./review-input.mjs";
 import {
     applyReviewInput,
     loadState,
-    queueReviewMutation,
     servers,
     subscribers,
 } from "./state.mjs";
@@ -124,29 +123,6 @@ export async function startServer(instanceId, reviewId) {
                 }
                 validateDiff(input.diff);
                 sendJson(res, 200, await applyReviewInput(entry.reviewId, input));
-                return;
-            }
-            if (req.method === "PATCH" && requestPath.startsWith("/api/sections/")) {
-                let sectionId;
-                try {
-                    sectionId = decodeURIComponent(requestPath.slice("/api/sections/".length));
-                } catch {
-                    throw new HttpError(400, "セクションIDの形式が不正です。");
-                }
-                const input = await readJsonBody(req);
-                if (!isRecord(input)) {
-                    throw new HttpError(400, "JSONオブジェクトのリクエストが必要です。");
-                }
-                const next = await queueReviewMutation(entry.reviewId, (nextState) => {
-                    const index = nextState.sections.findIndex((section) => section.id === sectionId);
-                    if (index < 0) {
-                        throw new HttpError(404, "指定されたレビューセクションが見つかりません。");
-                    }
-                    nextState.sections[index] = normalizeSectionUpdate(input, nextState.sections[index], index);
-                    nextState.stats.highImportance = nextState.sections.filter((section) => section.importance === "high").length;
-                    return nextState;
-                });
-                sendJson(res, 200, next);
                 return;
             }
             sendError(res, new HttpError(404, "Canvas APIのパスが見つかりません。"));

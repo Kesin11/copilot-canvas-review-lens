@@ -1,134 +1,48 @@
 # PR Review Lens
 
-Pull Request の Unified Diff を意味単位に整理し、コードレビュー時の認知負荷を下げる GitHub Copilot Canvas 拡張です。
+Pull Request の Unified Diff を、コードレビューで追いやすい「変更のストーリー」に整理する GitHub Copilot Canvas 拡張です。差分は外部サービスへ送信せず、Canvas とローカルの拡張プロセスだけで解析・保存します。GitHub の Pull Request を自動取得する機能はありません。
 
-この拡張は差分を外部サービスへ送信せず、Canvas とローカルの拡張プロセスだけで解析・保存します。GitHub の Pull Request を自動取得する機能は含まれていません。
+## 体験
 
-## 提供する機能
+PR Review Lens のメインビューは、読み取り専用のストーリー表示です。
 
-### Unified Diff の解析
+- PR の導入、分析状態、更新時刻、言語メタデータ
+- 変更ファイル、追加行、削除行、グループ数、高影響グループ数、差分行数
+- 高影響を先頭に、変更行数、パスの順で並ぶ目次
+- 各グループのタイトル、役割タグ、要約、影響、証拠、関連グループ、不確実性、任意の詳細
+- ファイルメタデータ、ハンク見出しと行範囲、グループごとの完全な差分
+- サイズ超過や解釈不能な差分の未解析ファイルと理由
 
-- Unified Diff を Canvas の入力欄に貼り付けて解析
-- 変更ファイル数、追加行数、削除行数を集計
-- ファイルパスと差分の特徴から変更種別を推定
-- 変更種別ごとに意味単位のレビューセクションを生成
-- 各セクションに関連ファイルと差分抜粋を表示
-- 長い差分はセクションごとに抜粋し、切り詰めたことを表示
-- 標準的な Unified Diff として解釈できない場合は、差分全体を「未分類の差分」として表示
+Canvas 内にステータス、注記、確認質問、手動グループ編集・並べ替えのUIはありません。図、依存関係ビュー、フローチャート、シーケンス図、Mermaidソースも提供しません。
 
-変更種別は次のカテゴリに分類されます。
+## 解析モデル
 
-| カテゴリ | 主な判定対象 |
-| --- | --- |
-| 権限・セキュリティ | `auth`、`security`、`permission`、`token`、`oauth` など |
-| データベース・スキーマ | migration、schema、database、`.sql`、`.prisma` など |
-| 依存関係・ビルド | `package.json`、lockfile、`go.mod`、`Cargo.toml` など |
-| API・サーバー境界 | api、route、controller、handler、HTTP、GraphQL など |
-| テスト | `tests`、`spec`、`.test.*`、`.spec.*` など |
-| ドキュメント | `docs`、`.md`、`.mdx`、`.rst` など |
-| 画面・UI | `.tsx`、`.jsx`、Vue、Svelte、CSS、components など |
-| 設定 | JSON、YAML、TOML、`.github`、config など |
-| 実装 | 上記に該当しない変更 |
+差分を読み込むと、まず拡張内の決定的解析が候補グループを作ります。パス、差分の特徴、import/require 等の変更ファイル間参照を使い、次を推定します。
 
-### 重要度の推定
+- 役割: セキュリティ、データベース、依存関係、API、UI、テスト、ドキュメント、設定、実装
+- 高影響シグナル: breaking change、DB/migration、公開API、認証/権限、データ整合性、広い依存関係・変更範囲
+- 証拠: ファイル、ハンク見出し、追加行の行範囲（取得できる場合）
+- 影響順: 高影響を先頭、同順位は変更行数の降順、最後にパス順
 
-セクションごとに重要度を自動推定します。
+すべての変更ファイルをグループに含めます。分類できないファイルは末尾の「横断・サポート」グループに理由付きで残します。解析上限を超えた差分は、解析できる部分を表示し、未解析ファイルを明示します。
 
-- **高**: セキュリティ、データベース、依存関係、規模の大きい変更など
-- **中**: API、複数ファイル、一定量の変更など
-- **低**: 比較的小規模な変更
-
-重要度は初期推定値です。Canvas上で変更できます。
-
-### レビュー情報の編集
-
-各セクションで次の項目を編集・保存できます。
-
-- セクションタイトル
-- セクション説明
-- 重要度
-- レビュー状態
-- レビュー注記
-
-レビュー状態は次の4種類です。
-
-- `未確認`
-- `確認中`
-- `問題なし`
-- `要確認`
-
-エージェントから更新された確認観点（`reviewQuestions`）も表示されます。
-
-### 依存関係の表示
-
-変更ファイル内の import や require などを調べ、今回の差分に含まれる変更ファイル同士の依存関係を表示します。
-
-対応している主な参照形式は次のとおりです。
-
-- JavaScript / TypeScript の `import`
-- CommonJS の `require`
-- Python の `from ... import`
-- Python 形式の `import`
-- C/C++ の `#include`
-
-依存先が今回の差分に含まれるファイルとして解決できた場合だけ、依存関係グラフに追加されます。
-
-### フローチャートとシーケンス図
-
-解析結果から次の図を生成します。
-
-- 変更セクション間の依存関係を表すフローチャート
-- Reviewer が各セクションを確認する流れを表すシーケンス図
-
-図は外部 CDN や Mermaid サーバーに依存せず、Canvas内でSVGとして描画されます。元の Mermaid ソースも展開して確認できます。
-
-自動生成される図は、次の Mermaid サブセットを対象にしています。
-
-- `flowchart LR`、`flowchart RL`、`flowchart TB`、`flowchart TD`
-- `graph` 形式の基本的なノードと矢印
-- `sequenceDiagram`
-- `participant`
-- 基本的なメッセージ矢印
-
-`update_dependency_view` で任意の図を設定した場合、簡易描画に対応しない構文はソースをテキストでフォールバック表示します。
+決定的候補を表示した後、エージェントが要約を更新できます。エージェントは入力された差分内のファイルだけを使い、機能境界・名前・ストーリーを決めます。グループ更新により同じファイルが複数グループに現れることがあり、その場合も各グループに完全な差分を表示します。拡張内でモデル呼び出しは行いません。
 
 ## 使い方
 
-### Canvasを開く
-
-エージェントに、次のように依頼します。
+エージェントに次のように依頼します。
 
 ```text
 PR Review Lensを開いてください。
 ```
 
-または、対象の差分を指定して開きます。
+または差分を指定します。
 
 ```text
 このUnified DiffをPR Review Lensでレビュー用に整理してください。
 ```
 
-Canvasを開いた時の入力に `diff` を含めると、表示時に自動解析されます。
-
-### Canvasから解析する
-
-1. Canvasの「レビュー対象のUnified Diff」を開く
-2. `git diff` または Pull Request の Unified Diff を貼り付ける
-3. 「解析して表示」を押す
-4. セクション、重要度、依存関係、図を確認する
-5. 必要に応じてタイトル、説明、重要度、状態、注記を編集する
-6. 各セクションの「注記を保存」を押す
-
-### GitHub PRの差分を使う場合
-
-この拡張はGitHub APIを直接呼び出しません。エージェントや別のGitHub連携機能で差分を取得し、`set_review_diff` に渡すか、Canvasへ貼り付けてください。
-
-例:
-
-```text
-owner/repository の PR #123 のUnified Diffを取得し、
-PR Review Lensで意味単位に分解してください。
-```
+Canvas の入力欄に差分を貼り付けて「解析して表示」を押すこともできます。エージェントや別の GitHub 連携機能で取得した差分は `set_review_diff` に渡せます。
 
 ## Canvasアクション
 
@@ -136,183 +50,126 @@ Canvas ID は `pr-review-lens` です。
 
 ### `get_review_state`
 
-現在のレビュー状態を取得します。
-
-返却内容には次の情報が含まれます。
-
-- `reviewId`
-- タイトル、リポジトリ、Pull Request番号
-- Unified Diff
-- レビューセクション
-- 依存関係のノードとエッジ
-- フローチャートとシーケンス図のソース
-- 集計統計
-- 最終更新時刻
-
-入力は空のオブジェクトです。
+入力は空のオブジェクトです。現在のストーリー状態を返します。
 
 ```json
 {}
 ```
 
+返却状態には、`reviewId`、PRメタデータ、`diff`、`groups`、`stats`、`analysisStatus`、`updatedAt`、`diffFingerprint`、`unparsedFiles`、`unparsedReason` が含まれます。依存関係グラフや図の状態は返しません。
+
+`analysisStatus` は `cached`、`analyzing`、`ai-updated`、`error` のいずれかです。AI更新が失敗しても決定的なグループは保持され、グループごとの `aiError` と状態の `analysisError` で示されます。
+
 ### `set_review_diff`
 
-Unified Diffを設定し、解析結果を保存します。
+Unified Diffを設定し、決定的解析を保存します。`diff` は必須です。通常の入力は最大4MB、3MBを超える場合は部分解析になります。
 
 ```json
 {
   "diff": "diff --git a/src/example.js b/src/example.js\n...",
   "title": "Example PR",
   "repository": "owner/repository",
-  "pullRequestNumber": 123
+  "pullRequestNumber": 123,
+  "language": "ja"
 }
 ```
 
-`diff` は必須です。最大サイズは3MBです。
-
 ### `update_review_sections`
 
-レビューセクションをエージェントから更新します。
+決定的候補に対するエージェント要約を構造化して反映します。旧アクション名を維持していますが、対象はレビューセクションの編集ではなくストーリーグループのAI要約です。`groups`（互換のため `sections` も可）には、次のフィールドだけを使います。
+
+`id`、`filePaths`、`title`、`role`、`summary`、`impact`、`evidence`、`relatedGroups`、`uncertainty`、`detail`
+
+`status`、`notes`、`reviewQuestions`、図、Mermaid、依存関係は受け付けません。`filePaths` に入力差分にないファイルがあれば除外し、使えるフィールドを保持します。`replaceAll: true` はサニタイズ済みグループを原子的に置換し、未指定の変更ファイルは横断・サポートグループに戻します。
 
 ```json
 {
-  "sections": [
+  "replaceAll": false,
+  "groups": [
     {
-      "id": "section-security-1",
-      "title": "認証処理の追加",
-      "description": "リクエスト処理の前に認証を実行する変更です。",
-      "importance": "high",
-      "importanceReason": "未認証アクセスに影響します。",
-      "status": "needs-attention",
-      "notes": "認証失敗時のレスポンスを確認する。",
-      "reviewQuestions": [
-        "認証処理はすべての経路で実行されるか？"
-      ]
+      "id": "group-0123456789abcdef",
+      "filePaths": ["src/auth/middleware.ts"],
+      "title": "認証境界を追加",
+      "role": "security",
+      "summary": "リクエスト処理前に認証を適用する変更です。",
+      "impact": "high",
+      "evidence": [
+        { "file": "src/auth/middleware.ts", "hunk": "@@ -10,2 +10,8 @@", "lineStart": 12, "lineEnd": 18 }
+      ],
+      "relatedGroups": [],
+      "uncertainty": "公開ルートの網羅性は差分だけでは確定できません。",
+      "detail": "各ルートの認証適用と失敗時レスポンスを確認してください。"
     }
   ]
 }
 ```
 
-デフォルトでは指定されたセクションだけを既存状態へマージします。全セクションを置き換える場合は、次のように `replaceAll` を指定します。
+AIが要約できない場合は、次のように決定的状態を残したままエラーを表示できます。
 
 ```json
-{
-  "replaceAll": true,
-  "sections": []
-}
+{ "error": "AI要約を生成できませんでした。", "groups": [] }
 ```
-
-`importance` は `high`、`medium`、`low`、`status` は `unreviewed`、`reviewing`、`accepted`、`needs-attention` のいずれかです。
-
-### `update_dependency_view`
-
-依存関係と図の内容を更新します。
-
-```json
-{
-  "dependencies": {
-    "nodes": [
-      { "id": "module-1", "label": "src/api.js", "sectionId": "section-api-1" }
-    ],
-    "edges": [
-      { "from": "module-1", "to": "module-2", "label": "./auth.js" }
-    ]
-  },
-  "flowchart": "flowchart LR\n  A[API] -->|依存| B[認証]",
-  "sequence": "sequenceDiagram\n  participant R as Reviewer\n  participant A as API\n  R->>A: 意図を確認"
-}
-```
-
-指定された項目だけが更新されます。
 
 ## ローカルHTTPインターフェース
 
-Canvasを開くと、拡張はインスタンスごとに `127.0.0.1` の一時ポートでHTTPサーバーを起動します。
+Canvas はインスタンスごとに `127.0.0.1` の一時ポートでサーバーを起動します。
 
 | メソッド | パス | 用途 |
 | --- | --- | --- |
-| `GET` | `/` | Canvas HTMLを返す |
-| `GET` | `/api/state` | 現在のレビュー状態を返す |
+| `GET` | `/` | Canvas HTML（読み取り専用ストーリー） |
+| `GET` | `/api/state` | 現在のストーリー状態 |
 | `GET` | `/events` | Server-Sent Eventsで状態更新を配信 |
-| `POST` | `/api/load` | Unified Diffを解析して保存 |
-| `PATCH` | `/api/sections/:id` | セクションの編集内容を保存 |
+| `POST` | `/api/load` | Unified Diffを決定的解析して保存 |
 
-このサーバーはループバックアドレスにのみバインドされ、外部ネットワークから直接アクセスできるようにはしていません。
+手動編集用の PATCH API はありません。状態更新はエージェント向け Canvas アクションから行います。
 
 ## 状態の保存
 
-レビュー状態は次の場所へJSONとして保存されます。
+レビュー状態は次の場所にJSONとして保存されます。
 
 ```text
 $COPILOT_HOME/extensions/pr-review-lens/artifacts/reviews/
 ```
 
-`COPILOT_HOME` が未設定の場合は、通常次の場所です。
+`COPILOT_HOME` が未設定の場合は `$HOME/.copilot/extensions/pr-review-lens/artifacts/reviews/` です。保存キーは Canvas の `instanceId` ではなくレビューIDです。
 
-```text
-$HOME/.copilot/extensions/pr-review-lens/artifacts/reviews/
-```
-
-レビューIDは次の優先順位で決まります。
-
-1. 明示された `reviewId`
-2. `repository` と `pullRequestNumber` から生成したID
-3. Unified DiffのSHA-256ハッシュ
-4. `new-review`
-
-Canvasの `instanceId` ではなくレビューIDを保存キーにするため、Canvasを再オープンしても同じレビュー状態を復元できます。
-
-保存時には次の整理が行われます。
-
-- 90日以上更新されていないレビュー状態を削除
-- 保存済みレビューが100件を超えた場合、古いものから削除
-- 現在開いているレビューや更新中のレビューは削除対象から除外
-
-複数の更新が同時に発生した場合は、レビューIDごとに直列化して保存します。
+保存処理はレビューIDごとに直列化し、一時ファイルからのrenameで状態を原子的に置き換えます。90日以上更新されていない状態を削除し、保存数が100件を超えた場合は古いものから整理します。旧バージョンの `sections`、`importance`、`dependencies`、`diagrams` を含むJSONは読み込み時に新しいストーリー状態へ正規化します（図・依存関係は返却状態に復元しません）。
 
 ## 制限事項
 
 - GitHub PR、ブランチ、コミットを自動取得しない
 - GitHubアクセストークンや認証情報を使用しない
-- 解析は静的なヒューリスティックであり、コードの正しさや脆弱性を保証しない
-- 依存関係は差分に含まれるファイル間の参照だけを対象とする
-- すべてのプログラミング言語、import形式、Mermaid構文に対応しているわけではない
-- 差分の最大サイズは3MB
-- セクションに表示する差分は最大約18,000文字で、超過分は抜粋表示になる
-- SVG描画に対応しない図はMermaidソースのテキスト表示になる
+- 解析は決定的なヒューリスティックであり、コードの正しさや脆弱性を保証しない
+- 言語は入力メタデータを表示するだけで、モデル言語検出は行わない
+- 通常の差分入力は4MBまで。3MBを超える差分は部分解析し、未解析ファイルを表示する
+- AI更新は入力差分のファイルだけを許可し、未知のファイル参照や不正な部分はサニタイズして保持可能な部分を反映する
 
-## インストール場所とGit管理
-
-このリポジトリでは、拡張をprojectスコープで共有・Git管理します。
+## ファイル構成
 
 ```text
 .github/extensions/pr-review-lens/
-├── extension.mjs       # SDKへの登録だけを行うエントリポイント
+├── extension.mjs       # SDKへの登録
 ├── canvas.mjs          # Canvas定義とエージェント向けアクション
-├── server.mjs          # CanvasごとのローカルHTTPサーバー
-├── state.mjs           # レビュー状態の保存、更新、SSE配信
-├── analysis.mjs        # Unified Diffの解析と図・依存関係の生成
-├── review-input.mjs    # 入力値の検証とセクション更新の正規化
-├── renderer.mjs        # CanvasのHTML/CSS/ブラウザ側UI
+├── server.mjs          # ループバックHTTPサーバーとSSE
+├── state.mjs           # 状態保存、正規化、原子的更新
+├── analysis.mjs        # Unified Diffの決定的解析と内部影響判定
+├── review-input.mjs    # 入力検証とAIフィールドのサニタイズ
+├── renderer.mjs        # 読み取り専用ストーリーUI
 ├── constants.mjs       # 定数と表示ラベル
 └── utils.mjs           # 共通ユーティリティ
 ```
 
-プロジェクトスコープの拡張は、そのリポジトリを開いたCopilotセッションで読み込まれます。同名のプロジェクト拡張がある場合、プロジェクト側がユーザースコープ側より優先されます。
-
 ## 開発・再読み込み
 
-`extension.mjs` または関連ファイルを変更した後は、Copilot CLIで拡張を再読み込みします。
+ファイルを変更した後はCopilot CLIで拡張を再読み込みします。
 
 ```text
 extensions_reload
 ```
 
-状態を確認する場合は、次の操作を使います。
+状態確認には次を使えます。
 
 ```text
 extensions_manage({ operation: "list" })
 extensions_manage({ operation: "inspect", name: "pr-review-lens" })
 ```
-
-拡張のエントリポイントは必ず `extension.mjs` である必要があります。内部実装を複数の `.mjs` ファイルへ分割する場合も、`extension.mjs` からそれらをimportしてください。
