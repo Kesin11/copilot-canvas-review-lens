@@ -287,7 +287,15 @@ Canvasの `instanceId` ではなくレビューIDを保存キーにするため�
 
 ```text
 .github/extensions/pr-review-lens/
-└── extension.mjs
+├── extension.mjs       # SDKへの登録だけを行うエントリポイント
+├── canvas.mjs          # Canvas定義とエージェント向けアクション
+├── server.mjs          # CanvasごとのローカルHTTPサーバー
+├── state.mjs           # レビュー状態の保存、更新、SSE配信
+├── analysis.mjs        # Unified Diffの解析と図・依存関係の生成
+├── review-input.mjs    # 入力値の検証とセクション更新の正規化
+├── renderer.mjs        # CanvasのHTML/CSS/ブラウザ側UI
+├── constants.mjs       # 定数と表示ラベル
+└── utils.mjs           # 共通ユーティリティ
 ```
 
 プロジェクトスコープの拡張は、そのリポジトリを開いたCopilotセッションで読み込まれます。同名のプロジェクト拡張がある場合、プロジェクト側がユーザースコープ側より優先されます。
