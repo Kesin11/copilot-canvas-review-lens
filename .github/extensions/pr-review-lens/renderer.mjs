@@ -111,6 +111,8 @@ export function renderHtml(instanceId) {
     .file-change .diff { margin: 0 10px 10px; }
     .meta-chip { border: 1px solid var(--border); border-radius: 999px; padding: 2px 7px; color: var(--muted); font-size: 12px; }
     .evidence { margin: 10px 0; padding: 8px; border-left: 3px solid var(--accent); background: var(--panel); }
+    .evidence summary { display: flex; align-items: center; gap: 4px; }
+    .evidence[open] summary { margin-bottom: 5px; }
     .evidence-list, .related-list { list-style: none; padding: 0; margin: 5px 0 0; }
     .evidence-list li, .related-list li { margin: 2px 0; }
     .diff {
@@ -251,8 +253,12 @@ export function renderHtml(instanceId) {
         return "file-" + groupId + "-" + String(filePath || "diff").replace(/[^A-Za-z0-9_-]+/g, "-");
       }
       function renderEvidence(group, card) {
-        var evidence = element("div", "evidence");
-        evidence.appendChild(element("strong", "", "証拠"));
+        var evidence = document.createElement("details");
+        evidence.className = "evidence";
+        var summary = document.createElement("summary");
+        summary.appendChild(element("strong", "", "証拠"));
+        summary.appendChild(element("span", "muted", "（" + (group.evidence || []).length + "件）"));
+        evidence.appendChild(summary);
         var list = element("ul", "evidence-list");
         (group.evidence || []).forEach(function (item) {
           var line = "";
