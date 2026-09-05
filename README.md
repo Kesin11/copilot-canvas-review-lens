@@ -283,18 +283,11 @@ Canvasの `instanceId` ではなくレビューIDを保存キーにするため�
 
 ## インストール場所とGit管理
 
-現在のユーザースコープでは、拡張は次の場所にあります。
-
-```text
-$HOME/.copilot/extensions/pr-review-lens/
-```
-
-リポジトリで共有・Git管理する場合は、リポジトリ内に次の構成で配置します。
+このリポジトリでは、拡張をprojectスコープで共有・Git管理します。
 
 ```text
 .github/extensions/pr-review-lens/
-├── extension.mjs
-└── README.md
+└── extension.mjs
 ```
 
 プロジェクトスコープの拡張は、そのリポジトリを開いたCopilotセッションで読み込まれます。同名のプロジェクト拡張がある場合、プロジェクト側がユーザースコープ側より優先されます。
