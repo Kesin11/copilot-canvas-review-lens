@@ -1,34 +1,40 @@
 # PR Review Lens
 
-Pull Request の Unified Diff を、コードレビューで追いやすい「変更のストーリー」に整理する GitHub Copilot Canvas 拡張です。差分は外部サービスへ送信せず、Canvas とローカルの拡張プロセスだけで解析・保存します。GitHub の Pull Request を自動取得する機能はありません。
+Pull Request の Unified Diff を、変更ファイルのパス順ではなく意味単位のストーリーとして整理する GitHub Copilot Canvas 拡張です。
 
-## 体験
+この拡張は差分を外部サービスへ送信せず、Canvas とローカルの拡張プロセスだけで解析・保存します。GitHub の Pull Request を自動取得する機能は含まれていません。
 
-PR Review Lens のメインビューは、読み取り専用のストーリー表示です。
+## 提供する機能
 
-- PR の導入、分析状態、更新時刻、言語メタデータ
-- 変更ファイル、追加行、削除行、グループ数、高影響グループ数、差分行数
-- 高影響を先頭に、変更行数、パスの順で並ぶ目次
-- 各グループのタイトル、役割タグ、要約、影響、証拠、関連グループ、不確実性、任意の詳細
-- ファイルメタデータ、ハンク見出しと行範囲、グループごとの完全な差分
-- サイズ超過や解釈不能な差分の未解析ファイルと理由
+### ストーリーとしての差分解析
 
-Canvas 内にステータス、注記、確認質問、手動グループ編集・並べ替えのUIはありません。図、依存関係ビュー、フローチャート、シーケンス図、Mermaidソースも提供しません。
+- Unified Diff を Canvas の入力欄に貼り付けて解析
+- 変更ファイル数、追加行数、削除行数、影響度を集計
+- ファイルパス、変更内容、import / require などの参照関係から候補グループを生成
+- 重要度、変更量、論理的な関連性に基づいてグループを並べ替え
+- 各グループに役割、要約、証拠、関連グループ、不確実性を表示
+- グループ内のファイルを変更行数つきの折りたたみ一覧として表示
+- ファイルを展開すると、そのファイルだけのコードdiffを確認可能
+- バイナリファイルや表示できないdiffは明示的なメッセージで表示
+- 標準的な Unified Diff として解釈できない場合は、未解析の差分として保持
 
-## 解析モデル
+解析は次のような変更を高い影響度として扱います。
 
-差分を読み込むと、まず拡張内の決定的解析が候補グループを作ります。パス、差分の特徴、import/require 等の変更ファイル間参照を使い、次を推定します。
+- 認証、権限、秘密情報などのセキュリティ境界
+- データベース、migration、schema
+- 依存関係やビルド設定
+- API、route、controller、handlerなどの外部境界
+- 大きな変更量や複数ファイルにまたがる変更
 
-- 役割: セキュリティ、データベース、依存関係、API、UI、テスト、ドキュメント、設定、実装
-- 高影響シグナル: breaking change、DB/migration、公開API、認証/権限、データ整合性、広い依存関係・変更範囲
-- 証拠: ファイル、ハンク見出し、追加行の行範囲（取得できる場合）
-- 影響順: 高影響を先頭、同順位は変更行数の降順、最後にパス順
+### AIによるストーリー要約
 
-すべての変更ファイルをグループに含めます。分類できないファイルは末尾の「横断・サポート」グループに理由付きで残します。解析上限を超えた差分は、解析できる部分を表示し、未解析ファイルを明示します。
+決定的な解析で作られた候補グループを、エージェントが差分内のファイルと証拠だけを根拠に要約できます。AI更新が失敗した場合も、決定的なグループを保持したままエラーを表示します。
 
-決定的候補を表示した後、エージェントが要約を更新できます。エージェントは入力された差分内のファイルだけを使い、機能境界・名前・ストーリーを決めます。グループ更新により同じファイルが複数グループに現れることがあり、その場合も各グループに完全な差分を表示します。拡張内でモデル呼び出しは行いません。
+Canvasは読み取り専用です。タイトル、要約、重要度、グループ構成、レビュー状態などをCanvas上で手動編集する機能はありません。
 
 ## 使い方
+
+### Canvasを開く
 
 エージェントに次のように依頼します。
 
@@ -36,13 +42,25 @@ Canvas 内にステータス、注記、確認質問、手動グループ編集�
 PR Review Lensを開いてください。
 ```
 
-または差分を指定します。
+または、対象の差分を指定して開きます。
 
 ```text
 このUnified DiffをPR Review Lensでレビュー用に整理してください。
 ```
 
-Canvas の入力欄に差分を貼り付けて「解析して表示」を押すこともできます。エージェントや別の GitHub 連携機能で取得した差分は `set_review_diff` に渡せます。
+Canvasを開いた時の入力に `diff` を含めると、表示時に自動解析されます。
+
+### Canvasから解析する
+
+1. Canvasの「レビュー対象のUnified Diff」を開く
+2. `git diff` または Pull Request の Unified Diff を貼り付ける
+3. 「解析して表示」を押す
+4. 上から順にグループの要約、証拠、影響度を読む
+5. 必要なファイルだけを展開してコードdiffを確認する
+
+### GitHub PRの差分を使う場合
+
+この拡張はGitHub APIを直接呼び出しません。エージェントや別のGitHub連携機能で累積PR差分を取得し、`set_review_diff` に渡すか、Canvasへ貼り付けてください。
 
 ## Canvasアクション
 
@@ -50,19 +68,26 @@ Canvas ID は `pr-review-lens` です。
 
 ### `get_review_state`
 
-入力は空のオブジェクトです。現在のストーリー状態を返します。
+現在の読み取り専用ストーリー状態を取得します。
+
+返却内容には次の情報が含まれます。
+
+- `reviewId`
+- タイトル、リポジトリ、Pull Request番号
+- Unified Diff
+- `groups`: グループのID、役割、要約、影響度、証拠、関連グループ
+- `groups[].files`: ファイルパス、追加行数、削除行数、変更行数、バイナリ判定、個別パッチ
+- 集計統計、分析状態、未解析ファイル
+
+入力は空のオブジェクトです。
 
 ```json
 {}
 ```
 
-返却状態には、`reviewId`、PRメタデータ、`diff`、`groups`、`stats`、`analysisStatus`、`updatedAt`、`diffFingerprint`、`unparsedFiles`、`unparsedReason` が含まれます。依存関係グラフや図の状態は返しません。
-
-`analysisStatus` は `cached`、`analyzing`、`ai-updated`、`error` のいずれかです。AI更新が失敗しても決定的なグループは保持され、グループごとの `aiError` と状態の `analysisError` で示されます。
-
 ### `set_review_diff`
 
-Unified Diffを設定し、決定的解析を保存します。`diff` は必須です。通常の入力は最大4MB、3MBを超える場合は部分解析になります。
+Unified Diffを設定し、決定的な候補グループを同期解析します。
 
 ```json
 {
@@ -74,102 +99,122 @@ Unified Diffを設定し、決定的解析を保存します。`diff` は必須�
 }
 ```
 
+`diff` は必須です。最大サイズは3MBです。
+
 ### `update_review_sections`
 
-決定的候補に対するエージェント要約を構造化して反映します。旧アクション名を維持していますが、対象はレビューセクションの編集ではなくストーリーグループのAI要約です。`groups`（互換のため `sections` も可）には、次のフィールドだけを使います。
-
-`id`、`filePaths`、`title`、`role`、`summary`、`impact`、`evidence`、`relatedGroups`、`uncertainty`、`detail`
-
-`status`、`notes`、`reviewQuestions`、図、Mermaid、依存関係は受け付けません。`filePaths` に入力差分にないファイルがあれば除外し、使えるフィールドを保持します。`replaceAll: true` はサニタイズ済みグループを原子的に置換し、未指定の変更ファイルは横断・サポートグループに戻します。
+エージェントが生成したストーリー要約をグループへ反映します。`groups` を使用し、`filePaths` は現在の差分に存在するファイルだけを指定してください。
 
 ```json
 {
-  "replaceAll": false,
+  "replaceAll": true,
   "groups": [
     {
-      "id": "group-0123456789abcdef",
-      "filePaths": ["src/auth/middleware.ts"],
-      "title": "認証境界を追加",
+      "id": "group-example",
+      "filePaths": ["src/example.js"],
+      "title": "認証境界の追加",
       "role": "security",
-      "summary": "リクエスト処理前に認証を適用する変更です。",
-      "impact": "high",
+      "summary": "リクエスト処理の前に認証を追加します。",
+      "impact": {
+        "level": "high",
+        "reason": "未認証アクセスの挙動に影響します。"
+      },
       "evidence": [
-        { "file": "src/auth/middleware.ts", "hunk": "@@ -10,2 +10,8 @@", "lineStart": 12, "lineEnd": 18 }
+        {
+          "file": "src/example.js",
+          "lineStart": 12,
+          "lineEnd": 18,
+          "reason": "認証呼び出しの追加"
+        }
       ],
-      "relatedGroups": [],
-      "uncertainty": "公開ルートの網羅性は差分だけでは確定できません。",
-      "detail": "各ルートの認証適用と失敗時レスポンスを確認してください。"
+      "uncertainty": "既存の別経路については差分だけでは確認できません。"
     }
   ]
 }
 ```
 
-AIが要約できない場合は、次のように決定的状態を残したままエラーを表示できます。
+受け付けるストーリーフィールドは `id`、`filePaths`、`title`、`role`、`summary`、`impact`、`evidence`、`relatedGroups`、`uncertainty`、`detail` です。図、依存関係、status、notes、reviewQuestionsは受け付けません。
 
-```json
-{ "error": "AI要約を生成できませんでした。", "groups": [] }
-```
+`replaceAll` を省略すると指定したグループだけを既存状態へマージします。空の `replaceAll` は現在のグループを消去せず、エラー状態として保持します。
 
 ## ローカルHTTPインターフェース
 
-Canvas はインスタンスごとに `127.0.0.1` の一時ポートでサーバーを起動します。
+Canvasを開くと、拡張はインスタンスごとに `127.0.0.1` の一時ポートでHTTPサーバーを起動します。
 
 | メソッド | パス | 用途 |
 | --- | --- | --- |
-| `GET` | `/` | Canvas HTML（読み取り専用ストーリー） |
-| `GET` | `/api/state` | 現在のストーリー状態 |
+| `GET` | `/` | Canvas HTMLを返す |
+| `GET` | `/api/state` | 現在のレビュー状態を返す |
 | `GET` | `/events` | Server-Sent Eventsで状態更新を配信 |
-| `POST` | `/api/load` | Unified Diffを決定的解析して保存 |
+| `POST` | `/api/load` | Unified Diffを解析して保存 |
 
-手動編集用の PATCH API はありません。状態更新はエージェント向け Canvas アクションから行います。
+このサーバーはループバックアドレスにのみバインドされ、外部ネットワークから直接アクセスできるようにはしていません。
 
 ## 状態の保存
 
-レビュー状態は次の場所にJSONとして保存されます。
+レビュー状態は次の場所へJSONとして保存されます。
 
 ```text
 $COPILOT_HOME/extensions/pr-review-lens/artifacts/reviews/
 ```
 
-`COPILOT_HOME` が未設定の場合は `$HOME/.copilot/extensions/pr-review-lens/artifacts/reviews/` です。保存キーは Canvas の `instanceId` ではなくレビューIDです。
+`COPILOT_HOME` が未設定の場合は、通常次の場所です。
 
-保存処理はレビューIDごとに直列化し、一時ファイルからのrenameで状態を原子的に置き換えます。90日以上更新されていない状態を削除し、保存数が100件を超えた場合は古いものから整理します。旧バージョンの `sections`、`importance`、`dependencies`、`diagrams` を含むJSONは読み込み時に新しいストーリー状態へ正規化します（図・依存関係は返却状態に復元しません）。
+```text
+$HOME/.copilot/extensions/pr-review-lens/artifacts/reviews/
+```
+
+レビューIDは次の優先順位で決まります。
+
+1. 明示された `reviewId`
+2. `repository` と `pullRequestNumber` から生成したID
+3. Unified DiffのSHA-256ハッシュ
+4. `new-review`
+
+Canvasの `instanceId` ではなくレビューIDを保存キーにするため、Canvasを再オープンしても同じレビュー状態を復元できます。
+
+保存時には90日以上更新されていないレビュー状態を削除し、保存済みレビューが100件を超えた場合は古いものから削除します。
 
 ## 制限事項
 
 - GitHub PR、ブランチ、コミットを自動取得しない
 - GitHubアクセストークンや認証情報を使用しない
-- 解析は決定的なヒューリスティックであり、コードの正しさや脆弱性を保証しない
-- 言語は入力メタデータを表示するだけで、モデル言語検出は行わない
-- 通常の差分入力は4MBまで。3MBを超える差分は部分解析し、未解析ファイルを表示する
-- AI更新は入力差分のファイルだけを許可し、未知のファイル参照や不正な部分はサニタイズして保持可能な部分を反映する
+- 解析は静的なヒューリスティックであり、コードの正しさや脆弱性を保証しない
+- 参照関係は差分に含まれるファイル間のimport / requireなどに限定される
+- すべてのプログラミング言語やimport形式を網羅しているわけではない
+- 差分の最大サイズは3MB
+- グループIDと候補の並び順は、同じ差分に対して安定するように生成される
 
-## ファイル構成
+## インストール場所とGit管理
+
+このリポジトリでは、拡張をprojectスコープで共有・Git管理します。
 
 ```text
 .github/extensions/pr-review-lens/
-├── extension.mjs       # SDKへの登録
+├── extension.mjs       # SDKへの登録を行うエントリポイント
 ├── canvas.mjs          # Canvas定義とエージェント向けアクション
-├── server.mjs          # ループバックHTTPサーバーとSSE
-├── state.mjs           # 状態保存、正規化、原子的更新
-├── analysis.mjs        # Unified Diffの決定的解析と内部影響判定
-├── review-input.mjs    # 入力検証とAIフィールドのサニタイズ
-├── renderer.mjs        # 読み取り専用ストーリーUI
+├── server.mjs          # CanvasごとのローカルHTTPサーバー
+├── state.mjs           # レビュー状態の保存、更新、SSE配信
+├── analysis.mjs        # Unified Diffの解析とグループ・証拠の生成
+├── review-input.mjs    # 入力値の検証とAI更新の正規化
+├── renderer.mjs        # CanvasのHTML/CSS/ブラウザ側UI
 ├── constants.mjs       # 定数と表示ラベル
 └── utils.mjs           # 共通ユーティリティ
 ```
 
 ## 開発・再読み込み
 
-ファイルを変更した後はCopilot CLIで拡張を再読み込みします。
+`extension.mjs` または関連ファイルを変更した後は、Copilot CLIで拡張を再読み込みします。
 
 ```text
 extensions_reload
 ```
 
-状態確認には次を使えます。
+状態を確認する場合は、次の操作を使います。
 
 ```text
 extensions_manage({ operation: "list" })
 extensions_manage({ operation: "inspect", name: "pr-review-lens" })
 ```
+
+拡張のエントリポイントは必ず `extension.mjs` である必要があります。内部実装を複数の `.mjs` ファイルへ分割する場合も、`extension.mjs` からそれらをimportしてください。

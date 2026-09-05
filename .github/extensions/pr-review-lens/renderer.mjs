@@ -46,7 +46,7 @@ export function renderHtml(instanceId) {
     button:hover { border-color: var(--accent); }
     button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
     textarea { width: 100%; padding: 8px; resize: vertical; min-height: 86px; }
-    .topbar, .toolbar, .status-line, .group-heading, .group-meta, .file-list, .evidence-list, .related-list {
+    .topbar, .toolbar, .status-line, .group-heading, .group-meta, .evidence-list, .related-list {
       display: flex;
       align-items: center;
       gap: 8px;
@@ -98,9 +98,18 @@ export function renderHtml(instanceId) {
     .group-heading h3 { margin-bottom: 2px; }
     .role { color: var(--muted); font-size: 12px; }
     .group-summary { margin: 8px 0; }
-    .group-meta, .file-list, .evidence-list, .related-list { flex-wrap: wrap; }
-    .file-chip, .meta-chip { border: 1px solid var(--border); border-radius: 999px; padding: 2px 7px; color: var(--muted); font-size: 12px; }
-    .file-chip { text-decoration: none; }
+    .group-meta, .evidence-list, .related-list { flex-wrap: wrap; }
+    .file-changes { display: grid; gap: 8px; margin: 12px 0; }
+    .file-change { border: 1px solid var(--border); border-radius: 6px; background: var(--panel); scroll-margin-top: 12px; }
+    .file-change summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; cursor: pointer; list-style-position: inside; }
+    .file-change summary:hover { background: var(--accent-muted); }
+    .file-change-path { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace); font-size: 12px; }
+    .file-change-stats { display: inline-flex; flex-shrink: 0; gap: 8px; font-size: 12px; font-weight: 600; }
+    .file-change-lines { color: var(--muted); font-weight: 400; }
+    .additions { color: var(--success); }
+    .deletions { color: var(--danger); }
+    .file-change .diff { margin: 0 10px 10px; }
+    .meta-chip { border: 1px solid var(--border); border-radius: 999px; padding: 2px 7px; color: var(--muted); font-size: 12px; }
     .evidence { margin: 10px 0; padding: 8px; border-left: 3px solid var(--accent); background: var(--panel); }
     .evidence-list, .related-list { list-style: none; padding: 0; margin: 5px 0 0; }
     .evidence-list li, .related-list li { margin: 2px 0; }
@@ -238,6 +247,9 @@ export function renderHtml(instanceId) {
           target.appendChild(stat);
         });
       }
+      function fileAnchor(groupId, filePath) {
+        return "file-" + groupId + "-" + String(filePath || "diff").replace(/[^A-Za-z0-9_-]+/g, "-");
+      }
       function renderEvidence(group, card) {
         var evidence = element("div", "evidence");
         evidence.appendChild(element("strong", "", "証拠"));
@@ -249,7 +261,7 @@ export function renderHtml(instanceId) {
             if (item.lineEnd && item.lineEnd !== item.lineStart) line += "-" + item.lineEnd;
           }
           var link = element("a", "", (item.file || "差分") + line);
-          link.href = "#group-" + group.id;
+          link.href = item.file ? "#" + fileAnchor(group.id, item.file) : "#group-" + group.id;
           link.title = item.reason || item.hunk || "グループの差分へ移動";
           var li = element("li");
           li.appendChild(link);
@@ -259,6 +271,44 @@ export function renderHtml(instanceId) {
         if (!list.children.length) list.appendChild(element("li", "muted", "ファイル単位の証拠（詳細行なし）"));
         evidence.appendChild(list);
         card.appendChild(evidence);
+      }
+      function renderFileChange(group, file) {
+        var details = document.createElement("details");
+        details.className = "file-change";
+        details.id = fileAnchor(group.id, file.path);
+        var summary = document.createElement("summary");
+        summary.appendChild(element("span", "file-change-path", file.path || "変更ファイル"));
+        var additions = file.additions || 0;
+        var deletions = file.deletions || 0;
+        var stats = element("span", "file-change-stats");
+        stats.appendChild(element("span", "additions", "+" + additions));
+        stats.appendChild(element("span", "deletions", "-" + deletions));
+        stats.appendChild(element("span", "file-change-lines", (file.changedLines || additions + deletions) + "行"));
+        summary.appendChild(stats);
+        details.appendChild(summary);
+        if (file.binary) {
+          details.appendChild(element("p", "muted", "バイナリファイルのためdiffを表示できません。"));
+        } else if (file.patch) {
+          var diff = element("pre", "diff");
+          renderDiff(diff, file.patch);
+          details.appendChild(diff);
+        } else {
+          details.appendChild(element("p", "muted", "表示できるdiffがありません。"));
+        }
+        return details;
+      }
+      function renderFileChanges(group, card) {
+        var files = Array.isArray(group.files) ? group.files : [];
+        if (!files.length) {
+          if (!group.diff) return;
+          var fallback = element("pre", "diff");
+          renderDiff(fallback, group.diff);
+          card.appendChild(fallback);
+          return;
+        }
+        var changes = element("div", "file-changes");
+        files.forEach(function (file) { changes.appendChild(renderFileChange(group, file)); });
+        card.appendChild(changes);
       }
       function renderGroup(group) {
         var card = element("article", "group-card");
@@ -272,13 +322,7 @@ export function renderHtml(instanceId) {
         card.appendChild(heading);
         card.appendChild(element("p", "group-summary", group.summary || group.description || "要約なし"));
         var meta = element("div", "group-meta");
-        var files = element("div", "file-list");
-        (group.files || []).forEach(function (file) {
-          var link = element("a", "file-chip", file.path + " +" + (file.additions || 0) + " -" + (file.deletions || 0));
-          link.href = "#group-" + group.id;
-          files.appendChild(link);
-        });
-        meta.appendChild(files);
+        meta.appendChild(element("span", "meta-chip", (group.files || []).length + "ファイル"));
         var impact = group.impact || {};
         if (typeof impact === "object" && impact.reason) meta.appendChild(element("span", "meta-chip", impact.reason));
         card.appendChild(meta);
@@ -288,8 +332,10 @@ export function renderHtml(instanceId) {
           related.appendChild(element("strong", "", "関連グループ"));
           var list = element("ul", "related-list");
           group.relatedGroups.forEach(function (id) {
-            var link = element("a", "", id);
+            var relatedGroup = (state.groups || []).find(function (candidate) { return candidate.id === id; });
+            var link = element("a", "", relatedGroup ? (relatedGroup.title || "変更") : "変更グループ");
             link.href = "#group-" + id;
+            if (relatedGroup && relatedGroup.title) link.title = relatedGroup.title;
             var li = element("li"); li.appendChild(link); list.appendChild(li);
           });
           related.appendChild(list);
@@ -304,9 +350,7 @@ export function renderHtml(instanceId) {
           details.appendChild(element("p", "", group.detail));
           card.appendChild(details);
         }
-        var diff = element("pre", "diff");
-        renderDiff(diff, group.diff);
-        card.appendChild(diff);
+        renderFileChanges(group, card);
         return card;
       }
       function renderGroups() {
