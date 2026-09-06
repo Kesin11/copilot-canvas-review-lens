@@ -87,7 +87,7 @@ export function renderHtml(instanceId) {
     .stat { min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
     .stat strong { display: block; font-size: 20px; line-height: 24px; }
     .stat span { color: var(--muted); font-size: 12px; }
-    .layout { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(250px, .75fr); gap: 16px; align-items: start; }
+    .page-guide { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 16px 0; }
     .panel, .group-card, .unparsed { padding: 12px; margin-bottom: 12px; }
     .panel h2 { margin-bottom: 8px; }
     .toc { margin: 0; padding-left: 20px; }
@@ -139,7 +139,7 @@ export function renderHtml(instanceId) {
     @media (max-width: 760px) {
       body { padding: 14px; }
       .topbar { align-items: flex-start; flex-direction: column; }
-      .layout { grid-template-columns: 1fr; }
+      .page-guide { grid-template-columns: 1fr; }
       .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
@@ -164,24 +164,23 @@ export function renderHtml(instanceId) {
     </div>
   </details>
 
+  <div class="page-guide">
+    <section class="panel">
+      <h2>目次</h2>
+      <ol id="toc" class="toc"></ol>
+    </section>
+    <section class="panel">
+      <h2>説明の読み方</h2>
+      <p class="hint">結論（要約）、証拠（ファイルとハンク）、影響（重要度）、不確実性の3層で整理しています。高影響グループは詳細が表示されます。</p>
+    </section>
+  </div>
+
   <section class="overview" id="overview"></section>
   <div id="unparsed"></div>
-  <div class="layout">
-    <main>
-      <div class="group-heading"><h2>レビュー・ストーリー</h2><span class="muted">重要度・変更量・パス順</span></div>
-      <div id="groups"></div>
-    </main>
-    <aside>
-      <section class="panel">
-        <h2>目次</h2>
-        <ol id="toc" class="toc"></ol>
-      </section>
-      <section class="panel">
-        <h2>説明の読み方</h2>
-        <p class="hint">結論（要約）、証拠（ファイルとハンク）、影響（重要度）、不確実性の3層で整理しています。高影響グループは詳細が表示されます。</p>
-      </section>
-    </aside>
-  </div>
+  <main>
+    <div class="group-heading"><h2>レビュー・ストーリー</h2><span class="muted">重要度・変更量・パス順</span></div>
+    <div id="groups"></div>
+  </main>
   <div id="toast" class="hidden" role="status"></div>
 
   <script>
@@ -253,9 +252,8 @@ export function renderHtml(instanceId) {
         return "file-" + groupId + "-" + String(filePath || "diff").replace(/[^A-Za-z0-9_-]+/g, "-");
       }
       function renderEvidence(group, card) {
-        var evidence = document.createElement("details");
-        evidence.className = "evidence";
-        var summary = document.createElement("summary");
+        var evidence = element("details", "evidence");
+        var summary = element("summary");
         summary.appendChild(element("strong", "", "証拠"));
         summary.appendChild(element("span", "muted", "（" + (group.evidence || []).length + "件）"));
         evidence.appendChild(summary);
@@ -279,10 +277,9 @@ export function renderHtml(instanceId) {
         card.appendChild(evidence);
       }
       function renderFileChange(group, file) {
-        var details = document.createElement("details");
-        details.className = "file-change";
+        var details = element("details", "file-change");
         details.id = fileAnchor(group.id, file.path);
-        var summary = document.createElement("summary");
+        var summary = element("summary");
         summary.appendChild(element("span", "file-change-path", file.path || "変更ファイル"));
         var additions = file.additions || 0;
         var deletions = file.deletions || 0;
