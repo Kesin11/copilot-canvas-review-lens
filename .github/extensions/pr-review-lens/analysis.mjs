@@ -1,6 +1,37 @@
 import path from "node:path";
-import { KIND_LABELS } from "./constants.mjs";
-import { hashText, normalizePath, getPathFromDiffLine, safeIdentifier, truncateText, unique } from "./utils.mjs";
+import { MAX_DIFF_BYTES } from "./constants.mjs";
+import { getPathFromDiffLine, hashText, normalizePath, unique } from "./utils.mjs";
+
+const ROLE_LABELS = {
+    security: "権限・セキュリティ",
+    database: "データベース・スキーマ",
+    dependencies: "依存関係・ビルド",
+    api: "API・サーバー境界",
+    frontend: "画面・UI",
+    tests: "テスト",
+    docs: "ドキュメント",
+    config: "設定",
+    implementation: "実装",
+    support: "横断・サポート",
+};
+
+const IMPACT_RANK = { high: 3, medium: 2, low: 1 };
+
+function parseHunkHeader(header) {
+    const match = String(header).match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:\s?(.*))?$/);
+    if (!match) {
+        return { header, oldStart: null, oldCount: null, newStart: null, newCount: null, context: "", lines: [] };
+    }
+    return {
+        header,
+        oldStart: Number(match[1]),
+        oldCount: Number(match[2] || 1),
+        newStart: Number(match[3]),
+        newCount: Number(match[4] || 1),
+        context: match[5] || "",
+        lines: [],
+    };
+}
 
 function parseUnifiedDiff(diff) {
     const lines = String(diff ?? "").replace(/\r\n?/g, "\n").split("\n");
@@ -14,9 +45,8 @@ function parseUnifiedDiff(diff) {
         current.path = current.newPath || current.oldPath || current.path || "unknown";
         current.patch = current.lines.join("\n");
         current.hunks = current.hunks.map((hunk) => ({
-            header: hunk.header,
-            context: hunk.context,
-            lines: hunk.lines,
+            ...hunk,
+            lines: [...hunk.lines],
         }));
         files.push(current);
         current = undefined;
@@ -70,8 +100,7 @@ function parseUnifiedDiff(diff) {
             continue;
         }
         if (line.startsWith("@@")) {
-            const context = line.split("@@")[2]?.trim() || "";
-            current.hunks.push({ header: line, context, lines: [] });
+            current.hunks.push(parseHunkHeader(line));
             continue;
         }
 
@@ -93,6 +122,9 @@ function parseUnifiedDiff(diff) {
 function classifyFile(file) {
     const filePath = normalizePath(file.path).toLowerCase();
     const content = file.lines.join("\n").toLowerCase();
+    if (file.path === "unknown") {
+        return "support";
+    }
     if (/(auth|security|permission|role|credential|secret|token|oauth|jwt)/.test(filePath)) {
         return "security";
     }
@@ -117,82 +149,10 @@ function classifyFile(file) {
     if (/\.(json|ya?ml|toml|ini|properties|env)$/.test(filePath) || /(^|\/)(config|\.github)(\/|$)/.test(filePath)) {
         return "config";
     }
+    if (!file.lines.length && !file.hunks.length && file.binary) {
+        return "support";
+    }
     return "implementation";
-}
-
-function getImportance(kind, files) {
-    const additions = files.reduce((total, file) => total + file.additions, 0);
-    const deletions = files.reduce((total, file) => total + file.deletions, 0);
-    const changedLines = additions + deletions;
-    if (["security", "database", "dependencies"].includes(kind)) {
-        return "high";
-    }
-    if (kind === "api" && changedLines >= 10) {
-        return "high";
-    }
-    if (changedLines >= 80 || deletions >= 35 || files.length >= 5) {
-        return "high";
-    }
-    if (changedLines >= 15 || files.length >= 2 || kind === "api") {
-        return "medium";
-    }
-    return "low";
-}
-
-function describeSection(kind, files) {
-    const additions = files.reduce((total, file) => total + file.additions, 0);
-    const deletions = files.reduce((total, file) => total + file.deletions, 0);
-    const pathList = files.map((file) => file.path).join("、");
-    return `${files.length}ファイルの${KIND_LABELS[kind] || "変更"}です。追加${additions}行・削除${deletions}行。対象: ${pathList}。初期分類はファイルパスと差分の特徴から推定しています。`;
-}
-
-function buildSections(files) {
-    const groups = new Map();
-    for (const file of files) {
-        const kind = classifyFile(file);
-        const group = groups.get(kind) || [];
-        group.push(file);
-        groups.set(kind, group);
-    }
-
-    return [...groups.entries()].map(([kind, groupFiles], index) => {
-        const contexts = unique(
-            groupFiles.flatMap((file) => file.hunks.map((hunk) => hunk.context)).filter((context) => context && !context.startsWith("+")),
-        ).slice(0, 3);
-        const contextTitle = contexts.length > 0 ? `: ${contexts.join(" / ").slice(0, 100)}` : "";
-        const rawDiff = groupFiles.map((file) => file.patch).join("\n\n");
-        const excerpt = truncateText(rawDiff);
-        const importance = getImportance(kind, groupFiles);
-        let importanceReason = "比較的小さな変更ですが、周辺コードとの整合性を確認してください。";
-        if (importance === "high") {
-            importanceReason = "影響範囲または変更のリスクが高い可能性があります。";
-        } else if (importance === "medium") {
-            importanceReason = "複数箇所または一定量の変更があり、意図の確認が必要です。";
-        }
-        return {
-            id: `section-${safeIdentifier(kind)}-${index + 1}`,
-            title: `${KIND_LABELS[kind] || "変更"}${contextTitle}`,
-            description: describeSection(kind, groupFiles),
-            importance,
-            importanceReason,
-            status: "unreviewed",
-            notes: "",
-            reviewQuestions: [],
-            kind,
-            files: groupFiles.map((file) => ({
-                path: file.path,
-                oldPath: file.oldPath,
-                newPath: file.newPath,
-                additions: file.additions,
-                deletions: file.deletions,
-                binary: file.binary,
-            })),
-            filePaths: groupFiles.map((file) => file.path),
-            diff: excerpt.text,
-            diffFingerprint: hashText(rawDiff),
-            diffTruncated: excerpt.truncated,
-        };
-    });
 }
 
 function getPatchContent(file) {
@@ -223,12 +183,9 @@ function extractImports(file) {
 
 function resolveChangedFile(sourcePath, importPath, fileByPath) {
     const normalizedImport = normalizePath(importPath);
-    const candidates = [];
-    if (normalizedImport.startsWith(".")) {
-        candidates.push(normalizePath(path.posix.join(path.posix.dirname(normalizePath(sourcePath)), normalizedImport)));
-    } else {
-        candidates.push(normalizedImport);
-    }
+    const candidates = normalizedImport.startsWith(".")
+        ? [normalizePath(path.posix.join(path.posix.dirname(normalizePath(sourcePath)), normalizedImport))]
+        : [normalizedImport];
 
     for (const candidate of candidates) {
         if (fileByPath.has(candidate)) {
@@ -254,189 +211,280 @@ function resolveChangedFile(sourcePath, importPath, fileByPath) {
     return undefined;
 }
 
-function buildDependencies(files, sections) {
+function buildDependencies(files, groups) {
     const fileByPath = new Map(files.map((file) => [normalizePath(file.path), file]));
-    const sectionByPath = new Map(
-        sections.flatMap((section) => section.filePaths.map((filePath) => [normalizePath(filePath), section.id])),
-    );
-    const nodes = files.map((file, index) => ({
-        id: `module-${index + 1}`,
-        label: file.path,
-        sectionId: sectionByPath.get(normalizePath(file.path)),
-    }));
-    const nodeByPath = new Map(files.map((file, index) => [normalizePath(file.path), nodes[index].id]));
+    const groupByPath = new Map(groups.flatMap((group) => group.filePaths.map((filePath) => [normalizePath(filePath), group.id])));
     const edges = [];
-
     for (const file of files) {
-        const from = nodeByPath.get(normalizePath(file.path));
+        const fromGroup = groupByPath.get(normalizePath(file.path));
         for (const importPath of extractImports(file)) {
             const targetPath = resolveChangedFile(file.path, importPath, fileByPath);
-            const to = targetPath ? nodeByPath.get(targetPath) : undefined;
-            if (from && to && from !== to) {
-                edges.push({ from, to, label: importPath });
+            const toGroup = targetPath ? groupByPath.get(targetPath) : undefined;
+            if (fromGroup && toGroup && fromGroup !== toGroup) {
+                edges.push({ from: fromGroup, to: toGroup, file: file.path, importPath });
             }
         }
     }
+    return edges.filter((edge, index, all) =>
+        all.findIndex((candidate) => candidate.from === edge.from && candidate.to === edge.to) === index);
+}
+
+function hunkEvidence(file, reason) {
+    if (!file.hunks.length) {
+        return [{ file: file.path, reason, hunk: null, lineStart: null, lineEnd: null }];
+    }
+    return file.hunks.map((hunk) => {
+        let line = hunk.newStart;
+        let lineStart = null;
+        let lineEnd = null;
+        for (const content of hunk.lines) {
+            if (content.startsWith("+") && !content.startsWith("+++")) {
+                lineStart ??= line;
+                lineEnd = line;
+                line += 1;
+            } else if (!content.startsWith("-") || content.startsWith("---")) {
+                line += 1;
+            }
+        }
+        return {
+            file: file.path,
+            reason,
+            hunk: hunk.header,
+            lineStart,
+            lineEnd,
+        };
+    });
+}
+
+function buildFileMetadata(file) {
     return {
-        nodes,
-        edges: edges.filter((edge, index, all) => all.findIndex((candidate) => candidate.from === edge.from && candidate.to === edge.to) === index),
+        path: file.path,
+        oldPath: file.oldPath,
+        newPath: file.newPath,
+        additions: file.additions,
+        deletions: file.deletions,
+        changedLines: file.additions + file.deletions,
+        binary: file.binary,
+        patch: file.patch,
+        hunks: file.hunks.map((hunk) => ({
+            header: hunk.header,
+            oldStart: hunk.oldStart,
+            oldCount: hunk.oldCount,
+            newStart: hunk.newStart,
+            newCount: hunk.newCount,
+            context: hunk.context,
+        })),
     };
 }
 
-function escapeMermaidLabel(value) {
-    return String(value ?? "")
-        .replace(/[\r\n]+/g, " ")
-        .replace(/"/g, "'");
+function scoreImpact(role, files, dependencyCount) {
+    const changedLines = files.reduce((total, file) => total + file.additions + file.deletions, 0);
+    const patch = files.map((file) => file.patch).join("\n").toLowerCase();
+    const paths = files.map((file) => normalizePath(file.path).toLowerCase()).join("\n");
+    const signals = [];
+    let score = Math.min(30, changedLines);
+    const addSignal = (name, points) => {
+        signals.push(name);
+        score += points;
+    };
+    if (/\bbreaking(?: change)?\b|!:\s*$/.test(patch)) addSignal("breaking change", 70);
+    if (role === "database" || /(^|\/)(migration|migrations|schema|database|db)(\/|$)/.test(paths)) addSignal("database or migration", 65);
+    if (role === "api" || /\b(export|public|endpoint|route|graphql|rest)\b/.test(patch)) addSignal("public API boundary", 55);
+    if (role === "security" || /\b(auth|permission|role|credential|token|oauth|jwt)\b/.test(paths + "\n" + patch)) addSignal("auth or permissions", 65);
+    if (/\b(transaction|integrity|constraint|foreign key|unique index|validation)\b/.test(patch)) addSignal("data integrity", 55);
+    if (role === "dependencies" || files.some((file) => file.additions + file.deletions > 40)) addSignal("broad dependency or change range", 45);
+    if (dependencyCount > 0) addSignal("cross-group dependency", Math.min(20, dependencyCount * 5));
+
+    let level = "low";
+    if (score >= 55) {
+        level = "high";
+    } else if (score >= 25) {
+        level = "medium";
+    }
+    const reason = signals.length ? signals.join("、") : "変更量とファイルの特徴から推定";
+    return { level, score, reason, signals, changedLines };
 }
 
-function buildDiagrams(sections, dependencies) {
-    const sectionIds = new Map(sections.map((section, index) => [section.id, `S${index + 1}`]));
-    const sectionIdByNodeId = new Map(
-        dependencies.nodes.map((node) => [node.id, sectionIds.get(node.sectionId)]),
-    );
-    const flowchart = ["flowchart LR"];
-    for (const section of sections) {
-        flowchart.push(`  ${sectionIds.get(section.id)}["${escapeMermaidLabel(section.title)}"]`);
+function groupId(filePaths, role) {
+    return `group-${hashText(`${[...filePaths].sort().join("\n")}|${role}`)}`;
+}
+
+function buildSections(files) {
+    const groups = new Map();
+    for (const file of files) {
+        const role = classifyFile(file);
+        const group = groups.get(role) || [];
+        group.push(file);
+        groups.set(role, group);
     }
 
-    const sectionEdges = [];
-    for (const edge of dependencies.edges) {
-        const from = sectionIdByNodeId.get(edge.from);
-        const to = sectionIdByNodeId.get(edge.to);
-        if (from && to && from !== to) {
-            sectionEdges.push(`${from} -->|依存| ${to}`);
-        }
-    }
-    for (const edge of unique(sectionEdges)) {
-        flowchart.push(`  ${edge}`);
-    }
+    return [...groups.entries()].map(([role, groupFiles]) => {
+        const filePaths = groupFiles.map((file) => file.path);
+        const changedLines = groupFiles.reduce((total, file) => total + file.additions + file.deletions, 0);
+        const summary = `${groupFiles.length}ファイルの${ROLE_LABELS[role] || "変更"}です。追加${groupFiles.reduce((total, file) => total + file.additions, 0)}行・削除${groupFiles.reduce((total, file) => total + file.deletions, 0)}行。`;
+        return {
+            id: groupId(filePaths, role),
+            title: ROLE_LABELS[role] || "変更",
+            role,
+            summary,
+            description: summary,
+            impact: scoreImpact(role, groupFiles, 0),
+            evidence: groupFiles.flatMap((file) => hunkEvidence(file, "変更されたファイルとハンク")),
+            relatedGroups: [],
+            uncertainty: "ファイルパス、差分量、変更内容からの決定的な推定です。",
+            detail: changedLines > 40 ? "変更量が多いため、ハンク単位で意図と回帰リスクを確認してください。" : "",
+            files: groupFiles.map(buildFileMetadata),
+            filePaths,
+            diff: groupFiles.map((file) => file.patch).join("\n\n"),
+            diffFingerprint: hashText(groupFiles.map((file) => file.patch).join("\n\n")),
+            diffTruncated: false,
+            source: "deterministic",
+            aiError: "",
+        };
+    });
+}
 
-    const sequence = ["sequenceDiagram", "  participant R as Reviewer"];
-    for (const section of sections.slice(0, 10)) {
-        const id = sectionIds.get(section.id);
-        sequence.push(`  participant ${id} as ${escapeMermaidLabel((KIND_LABELS[section.kind] || "変更").slice(0, 24))}`);
-        sequence.push(`  R->>${id}: 意図・リスクを確認`);
-    }
-    for (const edge of unique(sectionEdges)) {
-        const match = edge.match(/^(S\d+) -->\|[^|]+\| (S\d+)$/);
-        if (match) {
-            sequence.push(`  ${match[1]}->>${match[2]}: 依存関係を確認`);
+function orderGroups(groups) {
+    return [...groups].sort((left, right) => {
+        if ((left.role === "support") !== (right.role === "support")) {
+            return left.role === "support" ? 1 : -1;
         }
+        const impactOrder = (IMPACT_RANK[right.impact?.level] || 0) - (IMPACT_RANK[left.impact?.level] || 0);
+        if (impactOrder) return impactOrder;
+        const lineOrder = (right.impact?.changedLines || 0) - (left.impact?.changedLines || 0);
+        if (lineOrder) return lineOrder;
+        return String(left.filePaths?.[0] || "").localeCompare(String(right.filePaths?.[0] || ""));
+    });
+}
+
+function attachDependencyImpact(groups, files) {
+    const edges = buildDependencies(files, groups);
+    const dependencyCounts = new Map();
+    for (const edge of edges) {
+        dependencyCounts.set(edge.from, (dependencyCounts.get(edge.from) || 0) + 1);
+        dependencyCounts.set(edge.to, (dependencyCounts.get(edge.to) || 0) + 1);
     }
-    if (sections.length === 0) {
-        flowchart.push("  R[差分を入力してください]");
-        sequence.push("  R-->>R: 差分を入力してください");
-    }
+    const withImpact = groups.map((group) => {
+        const groupFiles = files.filter((file) => group.filePaths.includes(file.path));
+        return { ...group, impact: scoreImpact(group.role, groupFiles, dependencyCounts.get(group.id) || 0) };
+    });
+    const ordered = orderGroups(withImpact);
+    const validIds = new Set(ordered.map((group) => group.id));
     return {
-        flowchart: flowchart.join("\n"),
-        sequence: sequence.join("\n"),
+        groups: ordered.map((group) => ({
+            ...group,
+            relatedGroups: unique(edges
+                .filter((edge) => edge.from === group.id || edge.to === group.id)
+                .map((edge) => edge.from === group.id ? edge.to : edge.from)
+                .filter((id) => validIds.has(id))),
+        })),
+        edges,
     };
 }
 
-function calculateStats(diff, files, sections) {
+function buildSupportGroup(files, reason, rawDiff = "") {
+    const filePaths = files.map((file) => file.path);
+    return {
+        id: groupId(filePaths.length ? filePaths : ["unparsed"], "support"),
+        title: "横断・サポート",
+        role: "support",
+        summary: reason,
+        description: reason,
+        impact: { level: "medium", score: 25, reason, signals: ["partial analysis"], changedLines: files.reduce((sum, file) => sum + file.additions + file.deletions, 0) },
+        evidence: files.flatMap((file) => hunkEvidence(file, reason)),
+        relatedGroups: [],
+        uncertainty: reason,
+        detail: "",
+        files: files.map(buildFileMetadata),
+        filePaths,
+        diff: files.map((file) => file.patch).join("\n\n") || rawDiff,
+        diffFingerprint: hashText(files.map((file) => file.patch).join("\n\n") || rawDiff || reason),
+        diffTruncated: false,
+        source: "deterministic",
+        aiError: "",
+    };
+}
+
+function calculateStats(diff, files, groups, unparsedFiles = []) {
     const additions = files.reduce((total, file) => total + file.additions, 0);
     const deletions = files.reduce((total, file) => total + file.deletions, 0);
     return {
         files: files.length,
         additions,
         deletions,
-        sections: sections.length,
-        highImportance: sections.filter((section) => section.importance === "high").length,
+        groups: groups.length,
+        highImpact: groups.filter((group) => group.impact?.level === "high").length,
         diffLines: String(diff ?? "").split(/\r?\n/).length,
+        unparsedFiles: unparsedFiles.length,
+        partial: unparsedFiles.length > 0,
     };
-}
-
-function buildUnparsedDiffSections(diff) {
-    const excerpt = truncateText(String(diff));
-    return [
-        {
-            id: "section-unparsed-1",
-            title: "未分類の差分",
-            description: "標準的なUnified Diffのファイルヘッダーを検出できなかったため、差分全体を確認してください。",
-            importance: "medium",
-            importanceReason: "自動分類できていないため、手動で意味単位を確認してください。",
-            status: "unreviewed",
-            notes: "",
-            reviewQuestions: [],
-            kind: "implementation",
-            files: [],
-            filePaths: [],
-            diff: excerpt.text,
-            diffFingerprint: hashText(String(diff)),
-            diffTruncated: excerpt.truncated,
-        },
-    ];
-}
-
-function sectionIdentity(section) {
-    const filePaths = Array.isArray(section.filePaths) ? [...section.filePaths].sort() : [];
-    return `${section.kind || ""}|${filePaths.join("\n")}`;
-}
-
-function hasSameSectionDiff(previous, next) {
-    if (previous.diffFingerprint && next.diffFingerprint) {
-        return previous.diffFingerprint === next.diffFingerprint;
-    }
-    return previous.diff === next.diff;
-}
-
-function reconcileSections(previousSections, nextSections) {
-    const previousByIdentity = new Map(previousSections.map((section) => [sectionIdentity(section), section]));
-    return nextSections.map((section) => {
-        const previous = previousByIdentity.get(sectionIdentity(section));
-        if (!previous || !hasSameSectionDiff(previous, section)) {
-            return section;
-        }
-        return {
-            ...section,
-            title: previous.title,
-            description: previous.description,
-            importance: previous.importance,
-            importanceReason: previous.importanceReason,
-            status: previous.status,
-            notes: previous.notes,
-            reviewQuestions: previous.reviewQuestions,
-        };
-    });
-}
-
-function mergeReviewSections(currentSections, updates, replaceAll) {
-    if (replaceAll) {
-        return updates;
-    }
-
-    const updatesById = new Map(updates.map((section) => [section.id, section]));
-    const currentIds = new Set(currentSections.map((section) => section.id));
-    const mergedSections = currentSections.map((section) => updatesById.get(section.id) || section);
-    updates.forEach((section) => {
-        if (!currentIds.has(section.id)) {
-            mergedSections.push(section);
-        }
-    });
-    return mergedSections;
 }
 
 function analyzeDiff(diff) {
-    const files = parseUnifiedDiff(diff);
-    const isUnparsedDiff = files.length === 0 && String(diff).trim().length > 0;
-    const sections = isUnparsedDiff ? buildUnparsedDiffSections(diff) : buildSections(files);
-    const dependencies = isUnparsedDiff ? { nodes: [], edges: [] } : buildDependencies(files, sections);
+    const text = String(diff ?? "");
+    const allFiles = parseUnifiedDiff(text);
+    const overLimit = Buffer.byteLength(text, "utf8") > MAX_DIFF_BYTES;
+    const parsedFiles = [];
+    const unparsedFiles = [];
+    let remaining = MAX_DIFF_BYTES;
+    for (const file of allFiles) {
+        const size = Buffer.byteLength(file.patch, "utf8");
+        if (!overLimit || size <= remaining) {
+            parsedFiles.push(file);
+            remaining -= size;
+        } else {
+            unparsedFiles.push(file.path);
+        }
+    }
+    if (overLimit && allFiles.length === 0) {
+        unparsedFiles.push("(差分全体)");
+    }
+
+    let groups = buildSections(parsedFiles);
+    const internal = attachDependencyImpact(groups, parsedFiles);
+    groups = internal.groups;
+    let reason = "";
+    if (unparsedFiles.length) {
+        reason = overLimit
+            ? `差分が解析上限${Math.round(MAX_DIFF_BYTES / 1_000_000)}MBを超えたため、${unparsedFiles.length}件は未解析です。`
+            : `差分の一部を解析できなかったため、${unparsedFiles.length}件は未解析です。`;
+        groups.push(buildSupportGroup(
+            allFiles.filter((file) => unparsedFiles.includes(file.path)),
+            reason,
+            allFiles.length === 0 ? text : "",
+        ));
+        groups = orderGroups(groups);
+    } else if (groups.length === 0 && text.trim()) {
+        reason = "標準的なUnified Diffのファイルヘッダーを検出できないため、差分全体を未分類として保持しています。";
+        groups = [buildSupportGroup([], reason, text)];
+    }
+    const stats = calculateStats(text, allFiles, groups, unparsedFiles);
     return {
-        sections,
-        dependencies,
-        diagrams: buildDiagrams(sections, dependencies),
-        stats: calculateStats(diff, files, sections),
+        groups,
+        stats,
+        dependencyEdges: internal.edges,
+        unparsedFiles,
+        unparsedReason: reason,
+        diffFingerprint: hashText(text),
     };
 }
+
+function reconcileSections(previousGroups, nextGroups) {
+    // Kept as a compatibility export for old callers. Human-edited state is no
+    // longer preserved; deterministic analysis is the source of truth.
+    return nextGroups;
+}
+
 export {
+    ROLE_LABELS,
     parseUnifiedDiff,
     classifyFile,
     buildSections,
     buildDependencies,
-    buildDiagrams,
     calculateStats,
-    buildUnparsedDiffSections,
+    buildSupportGroup,
+    orderGroups,
     reconcileSections,
-    mergeReviewSections,
     analyzeDiff,
+    groupId,
 };

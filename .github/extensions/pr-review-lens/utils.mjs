@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { EXTENSION_NAME, MAX_SECTION_DIFF_CHARS } from "./constants.mjs";
+import { EXTENSION_NAME } from "./constants.mjs";
 
 export class HttpError extends Error {
     constructor(status, message) {
@@ -76,14 +76,4 @@ export function getPathFromDiffLine(line) {
 
 export function unique(values) {
     return [...new Set(values.filter(Boolean))];
-}
-
-export function truncateText(value, maxLength = MAX_SECTION_DIFF_CHARS) {
-    if (value.length <= maxLength) {
-        return { text: value, truncated: false };
-    }
-    return {
-        text: `${value.slice(0, maxLength)}\n\n[差分が長いため省略されました]`,
-        truncated: true,
-    };
 }
